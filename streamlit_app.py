@@ -1,59 +1,75 @@
 import streamlit as st
-import requests, xmltodict
-from transformers import pipeline
-from concurrent.futures import ThreadPoolExecutor
+import requests
+import xmltodict
+import os
 
-# ========== CONFIG ==========
-NUM_PAPERS = 5  # Reduced for speed
-SUMMARIZER_MODEL = "sshleifer/distilbart-cnn-12-6"
-summarizer = pipeline("summarization", model=SUMMARIZER_MODEL)
+# ---- CONFIG ----
+HF_API_KEY = os.getenv("HF_API_KEY")  # Add this in Streamlit secrets
+HF_API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+HEADERS = {"Authorization": f"Bearer {HF_API_KEY}"}
 
-st.set_page_config(page_title="LitSurvey - Gift for Sohini", page_icon="🎓", layout="centered")
-st.title("🎉 Happy Birthday Dr. Sohini! ❤️")
-st.markdown("I'm your personal literature survey assistant, crafted by your geeky husband. Type a topic below, and I’ll whip up a research‑style review for you!")
+# ---- HELPER FUNCTIONS ----
+def query_hf_api(text):
+    payload = {"inputs": text, "max_length": 150}
+    response = requests.post(HF_API_URL, headers=HEADERS, json=payload)
+    return response.json()[0]['summary_text'] if response.status_code == 200 else "Error in summarization."
 
-topic = st.text_input("Enter your research topic:", placeholder="e.g., Electrochemistry for wearable sensors")
+def fetch_papers_arxiv(topic, max_results=5):
+    url = f"http://export.arxiv.org/api/query?search_query=all:{topic}&start=0&max_results={max_results}"
+    data = requests.get(url).text
+    parsed = xmltodict.parse(data)
+    papers = parsed.get("feed", {}).get("entry", [])
+    if isinstance(papers, dict): papers = [papers]
+    return [{"title": p["title"], "summary": p.get("summary", ""), "link": p["id"]} for p in papers]
 
-# ========== FETCH PAPERS ==========
-def fetch_pubmed(topic, max_results=NUM_PAPERS):
-    url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={topic}&retmax={max_results}&retmode=json"
-    ids = requests.get(url).json().get("esearchresult", {}).get("idlist", [])
-    papers = []
-    for pid in ids:
-        abs_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={pid}&rettype=abstract&retmode=xml"
-        paper_xml = xmltodict.parse(requests.get(abs_url).content)
-        try:
-            article = paper_xml['PubmedArticleSet']['PubmedArticle']['MedlineCitation']['Article']
-            title = article['ArticleTitle']
-            abstract = article['Abstract']['AbstractText'][0]
-            papers.append({"title": title, "abstract": abstract, "url": f"https://pubmed.ncbi.nlm.nih.gov/{pid}/"})
-        except:
-            continue
-    return papers
+def fetch_papers_pubmed(topic, max_results=5):
+    search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={topic}&retmode=json&retmax={max_results}"
+    search_res = requests.get(search_url).json()
+    ids = ",".join(search_res.get("esearchresult", {}).get("idlist", []))
+    fetch_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={ids}&retmode=xml"
+    fetch_res = xmltodict.parse(requests.get(fetch_url).text)
+    articles = fetch_res.get("PubmedArticleSet", {}).get("PubmedArticle", [])
+    if isinstance(articles, dict): articles = [articles]
+    results = []
+    for article in articles:
+        art = article["MedlineCitation"]["Article"]
+        title = art["ArticleTitle"]
+        abstract = art.get("Abstract", {}).get("AbstractText", "")
+        link = f"https://pubmed.ncbi.nlm.nih.gov/{article['MedlineCitation']['PMID']}/"
+        results.append({"title": title, "summary": abstract, "link": link})
+    return results
 
-def summarize_paper(paper):
-    summary = summarizer(paper['abstract'], max_length=100, min_length=30, do_sample=False)[0]['summary_text']
-    return {**paper, "summary": summary}
+def create_lit_review(topic):
+    # Collect papers
+    arxiv = fetch_papers_arxiv(topic, 5)
+    pubmed = fetch_papers_pubmed(topic, 5)
+    papers = arxiv + pubmed
 
-# ========== GENERATE LIT REVIEW ==========
+    # Generate individual summaries
+    lit_summaries = []
+    for p in papers:
+        summary = query_hf_api(p["summary"][:1000]) if p["summary"] else "No summary available."
+        lit_summaries.append({"title": p["title"], "summary": summary, "link": p["link"]})
+
+    # Combine into a narrative
+    intro = f"Research on **{topic}** has evolved rapidly in recent years, with multiple studies exploring diverse dimensions of this field. "
+    body = " ".join([s['summary'] for s in lit_summaries])
+    conclusion = "Collectively, these studies contribute to a deeper understanding of the topic and highlight promising directions for future research."
+
+    narrative = f"{intro}{body} {conclusion}"
+
+    # Add references
+    references = "\n\n**References:**\n" + "\n".join([f"- [{p['title']}]({p['link']})" for p in lit_summaries])
+
+    return narrative + references
+
+# ---- UI ----
+st.title("❤️ Happy Birthday Dr. Sohini!")
+st.write("I'm your personal literature survey assistant created by your geeky husband. 🎂 Ask me for a topic!")
+
+topic = st.text_input("Enter a research topic", placeholder="e.g., Antimicrobial resistance in wearable devices")
 if st.button("Generate Literature Survey"):
-    if not topic:
-        st.warning("Please enter a topic first.")
-    else:
-        st.info("Brewing your quick literature review… ☕ This will take ~20–30 seconds.")
-        papers = fetch_pubmed(topic)
-
-        if not papers:
-            st.error("No papers found. Try a different topic.")
-        else:
-            # Summarize in parallel
-            with ThreadPoolExecutor() as executor:
-                summarized_papers = list(executor.map(summarize_paper, papers))
-
-            # Stitch review
-            review = "### Literature Review\n\n"
-            for p in summarized_papers:
-                review += f"**{p['title']}**\n\n{p['summary']}\n\n[Read more]({p['url']})\n\n"
-
-            st.markdown(review)
-            st.download_button("📥 Copy Full Review", review, file_name="literature_survey.txt")
+    with st.spinner("Brewing your Nature-style literature review..."):
+        review = create_lit_review(topic)
+        st.markdown(review)
+        st.success("Done! 🎉")
