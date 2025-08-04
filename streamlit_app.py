@@ -8,18 +8,20 @@ HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 # Hugging Face summarization API
 def query_hf_api(text):
     try:
-        API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+        API_URL = "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6"
         headers = {"Authorization": f"Bearer {HF_API_KEY}"}
         payload = {"inputs": text[:1024]}  # Limit input size
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=15)
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
         result = response.json()
         if isinstance(result, list) and "summary_text" in result[0]:
             return result[0]["summary_text"]
+        elif "error" in result:
+            return f"Error: {result['error']}"
         else:
             return "Summary unavailable."
-    except Exception:
-        return "Summary unavailable."
+    except Exception as e:
+        return f"Error in summarization: {str(e)}"
 
 # ArXiv fetch
 def fetch_papers(query, max_results=5):
