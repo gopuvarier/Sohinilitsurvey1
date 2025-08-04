@@ -2,10 +2,6 @@ import streamlit as st
 import requests
 import xmltodict
 import os
-import nltk
-from nltk.tokenize import sent_tokenize
-
-nltk.download('punkt')
 
 # Load Hugging Face API key
 HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
@@ -26,10 +22,10 @@ def query_hf_api(text):
     except Exception:
         return local_fallback_summary(text)
 
-# Local fallback summarizer
+# Local fallback summarizer (simple sentence split)
 def local_fallback_summary(text, max_sentences=3):
-    sentences = sent_tokenize(text)
-    return " ".join(sentences[:max_sentences]) if sentences else "No summary available."
+    sentences = text.split(". ")
+    return ". ".join(sentences[:max_sentences]) if sentences else "No summary available."
 
 # Fetch papers from ArXiv
 def fetch_papers(query, max_results=5):
