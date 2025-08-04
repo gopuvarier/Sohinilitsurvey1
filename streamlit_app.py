@@ -2,33 +2,14 @@ import streamlit as st
 import requests
 import xmltodict
 import os
+import google.generativeai as genai
 
-# Load Hugging Face API key
-HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+# Load Gemini API key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
 
-# Hugging Face summarization API with fallback
-def query_hf_api(text):
-    try:
-        API_URL = "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6"
-        headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-        payload = {"inputs": text[:1024]}  # Limit to first 1024 chars
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-        if isinstance(result, list) and "summary_text" in result[0]:
-            return result[0]["summary_text"]
-        else:
-            return local_fallback_summary(text)
-    except Exception:
-        return local_fallback_summary(text)
-
-# Local fallback summarizer (simple sentence split)
-def local_fallback_summary(text, max_sentences=3):
-    sentences = text.split(". ")
-    return ". ".join(sentences[:max_sentences]) if sentences else "No summary available."
-
-# Fetch papers from ArXiv
-def fetch_papers(query, max_results=5):
+# --- Fetch Papers (ArXiv) ---
+def fetch_papers(query, max_results=10):
     url = f"http://export.arxiv.org/api/query?search_query={query}&start=0&max_results={max_results}"
     data = requests.get(url).content
     feed = xmltodict.parse(data)
@@ -44,26 +25,37 @@ def fetch_papers(query, max_results=5):
         })
     return papers
 
-# Generate Literature Review
-def create_lit_review(topic):
-    papers = fetch_papers(topic)
-    summaries = []
-    for p in papers:
-        summary = query_hf_api(p.get("summary", ""))  # Try HF or fallback
-        summaries.append(summary)
-    combined_summary = " ".join(summaries)
-    return combined_summary, papers
+# --- Gemini: Generate a real literature survey ---
+def create_lit_review_gemini(topic, papers):
+    try:
+        model = genai.GenerativeModel("gemini-pro")
+        abstracts = "\n\n".join([f"Title: {p['title']}\nAbstract: {p['summary']}" for p in papers])
+        prompt = f"""
+        You are an academic assistant. Write an 800-word structured literature review on the topic '{topic}'.
+        Use the following research paper abstracts:
+        {abstracts}
+        Structure the review with an introduction, thematic grouping of findings, discussion of gaps, and a conclusion.
+        Use academic tone and cite the papers inline as [1], [2], etc. Provide references at the end with their titles.
+        """
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Error using Gemini: {e}"
 
-# Streamlit UI
+# --- Streamlit UI ---
 st.title("❤️ Happy Birthday Dr. Sohini!")
 st.write("I'm your personal literature survey assistant created by your geeky husband. 🎂 Ask me for a topic!")
 
 topic = st.text_input("Enter a research topic", placeholder="e.g., Electrochemistry in wearable devices")
 if st.button("Generate Literature Survey"):
-    with st.spinner("Brewing your literature survey... ☕"):
-        review, papers = create_lit_review(topic)
-        st.subheader("Literature Review")
-        st.write(review)
-        st.subheader("References:")
-        for p in papers:
-            st.markdown(f"- [{p['title']}]({p['link']})")
+    with st.spinner("Brewing your literature survey with Gemini... ☕"):
+        papers = fetch_papers(topic)
+        if not papers:
+            st.error("No papers found. Try a different topic.")
+        else:
+            review = create_lit_review_gemini(topic, papers)
+            st.subheader("Literature Review")
+            st.write(review)
+            st.subheader("References:")
+            for i, p in enumerate(papers, 1):
+                st.markdown(f"[{i}] [{p['title']}]({p['link']})")
