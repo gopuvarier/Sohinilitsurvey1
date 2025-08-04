@@ -2,28 +2,36 @@ import streamlit as st
 import requests
 import xmltodict
 import os
+import nltk
+from nltk.tokenize import sent_tokenize
 
+nltk.download('punkt')
+
+# Load Hugging Face API key
 HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-# Hugging Face summarization API
+# Hugging Face summarization API with fallback
 def query_hf_api(text):
     try:
         API_URL = "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6"
         headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-        payload = {"inputs": text[:1024]}  # Limit input size
+        payload = {"inputs": text[:1024]}  # Limit to first 1024 chars
         response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
         result = response.json()
         if isinstance(result, list) and "summary_text" in result[0]:
             return result[0]["summary_text"]
-        elif "error" in result:
-            return f"Error: {result['error']}"
         else:
-            return "Summary unavailable."
-    except Exception as e:
-        return f"Error in summarization: {str(e)}"
+            return local_fallback_summary(text)
+    except Exception:
+        return local_fallback_summary(text)
 
-# ArXiv fetch
+# Local fallback summarizer
+def local_fallback_summary(text, max_sentences=3):
+    sentences = sent_tokenize(text)
+    return " ".join(sentences[:max_sentences]) if sentences else "No summary available."
+
+# Fetch papers from ArXiv
 def fetch_papers(query, max_results=5):
     url = f"http://export.arxiv.org/api/query?search_query={query}&start=0&max_results={max_results}"
     data = requests.get(url).content
@@ -45,7 +53,7 @@ def create_lit_review(topic):
     papers = fetch_papers(topic)
     summaries = []
     for p in papers:
-        summary = query_hf_api(p.get("summary", ""))  # Safe access
+        summary = query_hf_api(p.get("summary", ""))  # Try HF or fallback
         summaries.append(summary)
     combined_summary = " ".join(summaries)
     return combined_summary, papers
@@ -54,7 +62,7 @@ def create_lit_review(topic):
 st.title("❤️ Happy Birthday Dr. Sohini!")
 st.write("I'm your personal literature survey assistant created by your geeky husband. 🎂 Ask me for a topic!")
 
-topic = st.text_input("Enter a research topic")
+topic = st.text_input("Enter a research topic", placeholder="e.g., Electrochemistry in wearable devices")
 if st.button("Generate Literature Survey"):
     with st.spinner("Brewing your literature survey... ☕"):
         review, papers = create_lit_review(topic)
