@@ -28,7 +28,7 @@ def fetch_papers(query, max_results=10):
 # --- Gemini: Generate a real literature survey ---
 def create_lit_review_gemini(topic, papers):
     try:
-        model = genai.GenerativeModel("gemini-pro")
+        model = genai.GenerativeModel("models/gemini-1.5-pro")  # Updated model name
         abstracts = "\n\n".join([f"Title: {p['title']}\nAbstract: {p['summary']}" for p in papers])
         prompt = f"""
         You are an academic assistant. Write an 800-word structured literature review on the topic '{topic}'.
